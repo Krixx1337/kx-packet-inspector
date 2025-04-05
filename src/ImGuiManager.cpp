@@ -5,6 +5,7 @@
 #include "PacketData.h" // Include for PacketInfo, g_packetLog, g_packetLogMutex
 #include "AppState.h"   // Include for UI state, filter state, hook status
 #include "GuiStyle.h"  // Include for custom styling functions
+#include "FormattingUtils.h"
 #include <vector>
 #include <mutex>
 #include <deque>
@@ -16,6 +17,30 @@
 #include <map>     // For std::map used in filtering
 #include "PacketHeaders.h" // Need this for iterating known headers
 #include <windows.h> // Required for ShellExecuteA
+#include <algorithm> // For std::sort if needed later
+
+namespace { // Anonymous namespace for helper
+    void InitializeFilters() {
+        // Clear existing (in case of re-init?)
+        kx::g_packetHeaderFilterSelection.clear();
+        kx::g_specialPacketFilterSelection.clear();
+
+        // Populate CMSG headers
+        for (const auto& headerInfo : kx::GetKnownCMSGHeaders()) {
+            kx::g_packetHeaderFilterSelection[std::make_pair(kx::PacketDirection::Sent, headerInfo.first)] = false; // Default unchecked
+        }
+
+        // Populate SMSG headers
+        for (const auto& headerInfo : kx::GetKnownSMSGHeaders()) {
+            kx::g_packetHeaderFilterSelection[std::make_pair(kx::PacketDirection::Received, headerInfo.first)] = false; // Default unchecked
+        }
+
+        // Populate Special types
+        for (const auto& typeInfo : kx::GetSpecialPacketTypesForFilter()) {
+            kx::g_specialPacketFilterSelection[typeInfo.first] = false; // Default unchecked
+        }
+    }
+} // end anonymous namespace
 
 bool ImGuiManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* context, HWND hwnd) {
     IMGUI_CHECKVERSION();
@@ -23,30 +48,15 @@ bool ImGuiManager::Initialize(ID3D11Device* device, ID3D11DeviceContext* context
     ImGuiIO& io = ImGui::GetIO(); (void)io;
     io.ConfigFlags = ImGuiConfigFlags_NoMouseCursorChange;
 
-    // Apply custom style and font
-    GUIStyle::LoadAppFont(); // Load font first
-    GUIStyle::ApplyCustomStyle(); // Then apply style
+    GUIStyle::LoadAppFont();
+    GUIStyle::ApplyCustomStyle();
 
     if (!ImGui_ImplWin32_Init(hwnd)) return false;
     if (!ImGui_ImplDX11_Init(device, context)) return false;
 
-    // Initialize the filter selection map (do this once)
-    // Ideally, PacketHeaders.h would provide an iterable list/map,
-    // but we can manually list them based on the enum for now.
-    // Or better, iterate the map used in GetPacketName if accessible.
-    // Let's assume GetPacketName's map isn't directly accessible and list manually.
-    // This is brittle and should be improved if PacketHeaders changes often.
-    kx::g_packetFilterSelection[kx::PacketHeader::CMSG_CHAT_SEND_MESSAGE] = false;
-    kx::g_packetFilterSelection[kx::PacketHeader::CMSG_USE_SKILL] = false;
-    kx::g_packetFilterSelection[kx::PacketHeader::CMSG_MOVEMENT] = false;
-    kx::g_packetFilterSelection[kx::PacketHeader::CMSG_MOVEMENT_WITH_ROTATION] = false;
-    kx::g_packetFilterSelection[kx::PacketHeader::CMSG_MOVEMENT_END] = false;
-    kx::g_packetFilterSelection[kx::PacketHeader::CMSG_JUMP] = false;
-    kx::g_packetFilterSelection[kx::PacketHeader::CMSG_HEARTBEAT] = false;
-    kx::g_packetFilterSelection[kx::PacketHeader::CMSG_SELECT_AGENT] = false;
-    kx::g_packetFilterSelection[kx::PacketHeader::CMSG_DESELECT_AGENT] = false;
-    kx::g_packetFilterSelection[kx::PacketHeader::CMSG_MOUNT_MOVEMENT] = false;
-    kx::g_packetFilterSelection[kx::PacketHeader::UNKNOWN] = false; // Add UNKNOWN too
+    // *** NEW: Initialize filters ***
+    InitializeFilters();
+    // *** END NEW ***
 
     return true;
 }
@@ -64,34 +74,6 @@ void ImGuiManager::Render(ID3D11DeviceContext* context, ID3D11RenderTargetView* 
     ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 }
 
-// Helper function to format timestamp
-std::string FormatTimestamp(const std::chrono::system_clock::time_point& tp) {
-    std::time_t time = std::chrono::system_clock::to_time_t(tp);
-    std::tm local_tm;
-    localtime_s(&local_tm, &time); // Use localtime_s for safety
-
-    std::stringstream ss;
-    ss << std::put_time(&local_tm, "%H:%M:%S"); // Format as HH:MM:SS
-    // Add milliseconds if needed
-    // auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()) % 1000;
-    // ss << '.' << std::setfill('0') << std::setw(3) << ms.count();
-    return ss.str();
-}
-
-// Helper function to format byte data as hex
-std::string FormatBytesToHex(const std::vector<uint8_t>& data, int maxBytes = 32) {
-    std::stringstream ss;
-    int count = 0;
-    for (const auto& byte : data) {
-        if (count >= maxBytes) {
-            ss << "...";
-            break;
-        }
-        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(byte) << " ";
-        count++;
-    }
-    return ss.str();
-}
 
 
 // --- Helper Functions for Rendering UI Sections ---
@@ -185,33 +167,77 @@ void ImGuiManager::RenderStatusControlsSection() {
 }
 
 void ImGuiManager::RenderFilteringSection() {
-    // --- Filtering Section ---
     if (ImGui::CollapsingHeader("Filtering")) {
-        ImGui::RadioButton("Show All", reinterpret_cast<int*>(&kx::g_packetFilterMode), static_cast<int>(kx::FilterMode::ShowAll)); ImGui::SameLine();
-        ImGui::RadioButton("Include Only", reinterpret_cast<int*>(&kx::g_packetFilterMode), static_cast<int>(kx::FilterMode::IncludeOnly)); ImGui::SameLine();
-        ImGui::RadioButton("Exclude", reinterpret_cast<int*>(&kx::g_packetFilterMode), static_cast<int>(kx::FilterMode::Exclude));
 
+        // --- Global Direction Filter ---
+        ImGui::Text("Show Direction:"); ImGui::SameLine();
+        ImGui::RadioButton("All##Dir", reinterpret_cast<int*>(&kx::g_packetDirectionFilterMode), static_cast<int>(kx::DirectionFilterMode::ShowAll)); ImGui::SameLine();
+        ImGui::RadioButton("Sent##Dir", reinterpret_cast<int*>(&kx::g_packetDirectionFilterMode), static_cast<int>(kx::DirectionFilterMode::ShowSentOnly)); ImGui::SameLine();
+        ImGui::RadioButton("Received##Dir", reinterpret_cast<int*>(&kx::g_packetDirectionFilterMode), static_cast<int>(kx::DirectionFilterMode::ShowReceivedOnly));
+        ImGui::Separator();
+
+        // --- Header/Type Filter Mode ---
+        ImGui::Text("Filter Mode:"); ImGui::SameLine();
+        ImGui::RadioButton("Show All Types", reinterpret_cast<int*>(&kx::g_packetFilterMode), static_cast<int>(kx::FilterMode::ShowAll)); ImGui::SameLine();
+        ImGui::RadioButton("Include Checked", reinterpret_cast<int*>(&kx::g_packetFilterMode), static_cast<int>(kx::FilterMode::IncludeOnly)); ImGui::SameLine();
+        ImGui::RadioButton("Exclude Checked", reinterpret_cast<int*>(&kx::g_packetFilterMode), static_cast<int>(kx::FilterMode::Exclude));
+
+        // --- Checkbox Section (only if mode is Include/Exclude) ---
         if (kx::g_packetFilterMode != kx::FilterMode::ShowAll) {
-            // Wrap checkboxes in a scrolling child window
-            ImGui::BeginChild("FilterCheckboxRegion", ImVec2(0, 150.0f), true); // Width=auto, Height=150px, Border=true
+            ImGui::Separator();
+            ImGui::BeginChild("FilterCheckboxRegion", ImVec2(0, 150.0f), true);
             ImGui::Indent();
-            // Dynamically create checkboxes for known packet types
-            // This relies on the manual initialization in Initialize() matching PacketHeaders.h
-            // A better approach would involve iterating a static map/list from PacketHeaders.h
-            for (auto const& [header, selected] : kx::g_packetFilterSelection) {
-                 std::string name;
-                 if (header == kx::PacketHeader::UNKNOWN) {
-                     name = "Unknown Packets"; // Special label for the UNKNOWN category
-                 } else {
-                     // Cast the PacketHeader enum back to uint8_t for the GetPacketName call for known headers
-                     name = kx::GetPacketName(static_cast<uint8_t>(header));
-                 }
-                 bool isSelected = selected; // Copy to local variable for Checkbox
-                 if (ImGui::Checkbox(name.c_str(), &isSelected)) {
-                     kx::g_packetFilterSelection[header] = isSelected; // Update map on change
-                 }
-                 // Optional: Add tooltips or columns for better layout if many headers
+
+            // Group Checkboxes
+            if (ImGui::TreeNode("Sent Headers (CMSG)")) {
+                for (auto& pair : kx::g_packetHeaderFilterSelection) {
+                    if (pair.first.first == kx::PacketDirection::Sent) {
+                        uint8_t headerId = pair.first.second;
+                        bool& selected = pair.second;
+                        std::string name = kx::GetPacketName(kx::PacketDirection::Sent, headerId); // Get name again for display
+                        ImGui::Checkbox(name.c_str(), &selected);
+                    }
+                }
+                ImGui::TreePop();
             }
+
+            if (ImGui::TreeNode("Received Headers (SMSG)")) {
+                // Check if any SMSG headers are actually defined besides placeholder
+                bool hasSmsgHeaders = false;
+                for (const auto& pair : kx::g_packetHeaderFilterSelection) {
+                    if (pair.first.first == kx::PacketDirection::Received) {
+                        hasSmsgHeaders = true;
+                        break;
+                    }
+                }
+
+                if (hasSmsgHeaders) {
+                    for (auto& pair : kx::g_packetHeaderFilterSelection) {
+                        if (pair.first.first == kx::PacketDirection::Received) {
+                            uint8_t headerId = pair.first.second;
+                            bool& selected = pair.second;
+                            std::string name = kx::GetPacketName(kx::PacketDirection::Received, headerId);
+                            ImGui::Checkbox(name.c_str(), &selected);
+                        }
+                    }
+                }
+                else {
+                    ImGui::TextDisabled(" (No known SMSG headers defined yet)");
+                }
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNode("Special Types")) {
+                for (auto& pair : kx::g_specialPacketFilterSelection) {
+                    kx::InternalPacketType type = pair.first;
+                    bool& selected = pair.second;
+                    std::string name = kx::GetSpecialPacketTypeName(type);
+                    ImGui::Checkbox(name.c_str(), &selected);
+                }
+                ImGui::TreePop();
+            }
+
+
             ImGui::Unindent();
             ImGui::EndChild();
         }
@@ -221,83 +247,107 @@ void ImGuiManager::RenderFilteringSection() {
 }
 
 void ImGuiManager::RenderPacketLogSection() {
-    // --- Packet Log Section ---
     ImGui::Text("Packet Log:");
     ImGui::Separator();
-    ImGui::BeginChild("PacketLogScrollingRegion", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar); // Enable horizontal scrollbar
+    ImGui::BeginChild("PacketLogScrollingRegion", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
 
-    // Pre-filter indices based on current filter settings
+    // --- Filtering: Build list of visible item indices ---
     std::vector<int> filtered_indices;
-    { // Scope for initial lock to build filtered list
+    {
         std::lock_guard<std::mutex> lock(kx::g_packetLogMutex);
-        filtered_indices.reserve(kx::g_packetLog.size()); // Optimization
+        filtered_indices.reserve(kx::g_packetLog.size());
 
         for (int i = 0; i < kx::g_packetLog.size(); ++i) {
-            const auto& packet = kx::g_packetLog[i]; // Need to access packet here for filtering
+            const auto& packet = kx::g_packetLog[i];
             bool showPacket = true;
 
-            if (kx::g_packetFilterMode == kx::FilterMode::IncludeOnly) {
-                auto it = kx::g_packetFilterSelection.find(packet.header);
-                // Show only if the header exists in the map and is checked
-                if (it == kx::g_packetFilterSelection.end() || !it->second) {
-                    showPacket = false;
+            // Apply direction filter
+            if (kx::g_packetDirectionFilterMode == kx::DirectionFilterMode::ShowSentOnly && packet.direction != kx::PacketDirection::Sent) {
+                showPacket = false;
+            }
+            else if (kx::g_packetDirectionFilterMode == kx::DirectionFilterMode::ShowReceivedOnly && packet.direction != kx::PacketDirection::Received) {
+                showPacket = false;
+            }
+
+            // Apply header/type include/exclude filter
+            if (showPacket && kx::g_packetFilterMode != kx::FilterMode::ShowAll) {
+                bool isChecked = false;
+                bool foundInFilters = false;
+
+                if (packet.specialType == kx::InternalPacketType::NORMAL || packet.specialType == kx::InternalPacketType::UNKNOWN_HEADER) {
+                    auto key = std::make_pair(packet.direction, packet.rawHeaderId);
+                    auto it = kx::g_packetHeaderFilterSelection.find(key);
+                    if (it != kx::g_packetHeaderFilterSelection.end()) {
+                        isChecked = it->second;
+                        foundInFilters = true;
+                    }
                 }
-            } else if (kx::g_packetFilterMode == kx::FilterMode::Exclude) {
-                auto it = kx::g_packetFilterSelection.find(packet.header);
-                // Hide if the header exists in the map and is checked
-                if (it != kx::g_packetFilterSelection.end() && it->second) {
-                    showPacket = false;
+                else {
+                    auto it = kx::g_specialPacketFilterSelection.find(packet.specialType);
+                    if (it != kx::g_specialPacketFilterSelection.end()) {
+                        isChecked = it->second;
+                        foundInFilters = true;
+                    }
+                }
+
+                if (kx::g_packetFilterMode == kx::FilterMode::IncludeOnly) {
+                    if (!foundInFilters || !isChecked) showPacket = false;
+                }
+                else { // Exclude mode
+                    if (foundInFilters && isChecked) showPacket = false;
                 }
             }
-            // Always show if mode is ShowAll
 
             if (showPacket) {
                 filtered_indices.push_back(i);
             }
         }
-    } // Initial lock goes out of scope
+    } // End lock scope
 
-    // Now use the clipper on the filtered indices
+     // --- Rendering with Clipper ---
     ImGuiListClipper clipper;
     clipper.Begin(filtered_indices.size());
     while (clipper.Step()) {
-        // Lock again for the duration of rendering this clipped range
-        // This is necessary because g_packetLog could potentially be modified
-        // by the capture thread between the filtering step and this rendering step.
         std::lock_guard<std::mutex> lock(kx::g_packetLogMutex);
 
         for (int j = clipper.DisplayStart; j < clipper.DisplayEnd; ++j) {
-            // Get the original index from the filtered list
-            if (j < 0 || j >= filtered_indices.size()) continue; // Basic bounds check
+            if (j < 0 || j >= filtered_indices.size()) continue;
             int original_index = filtered_indices[j];
-
-            // Ensure the original index is still valid (in case log was cleared/shrunk)
             if (original_index >= kx::g_packetLog.size()) continue;
 
             const auto& packet = kx::g_packetLog[original_index];
 
-            // Render the packet log entry
-            std::string timestampStr = FormatTimestamp(packet.timestamp);
-            std::string dataHexStr = FormatBytesToHex(packet.data);
-            const char* directionStr = (packet.direction == kx::PacketDirection::Sent) ? "[Sent]" : "[Recv]";
-            std::string logEntry = timestampStr + " | " + directionStr + " | " + packet.name + " | Size: " + std::to_string(packet.size) + " | Data: " + dataHexStr;
+            // --- Use helper to format log entry ---
+            std::string logEntry = kx::Utils::FormatLogEntryString(packet); // Use the helper
 
-            ImGui::PushID(original_index); // Use original index for a stable ID
-            ImGui::PushItemWidth(-FLT_MIN);
-            ImGui::InputText("##PacketLogEntry", (char*)logEntry.c_str(), logEntry.size() + 1, ImGuiInputTextFlags_ReadOnly);
+            // --- Render ---
+            ImGui::PushID(original_index);
+
+            // Calculate width for InputText, leaving space for the button
+            // Adjust multiplier as needed for button width + spacing
+            float buttonWidth = ImGui::CalcTextSize("Copy").x + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+            ImGui::PushItemWidth(-buttonWidth);
+            ImGui::InputText("##Pkt", (char*)logEntry.c_str(), logEntry.size() + 1, ImGuiInputTextFlags_ReadOnly);
             ImGui::PopItemWidth();
+
+            // Add the copy button for this line
+            ImGui::SameLine();
+            // Use SmallButton for less visual clutter
+            if (ImGui::SmallButton("Copy")) {
+                ImGui::SetClipboardText(logEntry.c_str());
+            }
+
             ImGui::PopID();
         }
-    } // Rendering lock goes out of scope
+    }
     clipper.End();
 
-    // Auto-scroll logic remains the same
-    // Check scroll only if there are items to potentially scroll to
+    // --- Auto-Scroll ---
     if (!filtered_indices.empty() && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
         ImGui::SetScrollHereY(1.0f);
     }
 
-    ImGui::EndChild();
+    ImGui::EndChild(); // End "PacketLogScrollingRegion"
 }
 
 

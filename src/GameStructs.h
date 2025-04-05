@@ -3,6 +3,7 @@
 #include <cstddef> // For std::byte, std::size_t
 #include <cstdint> // For std::uint8_t, std::int32_t
 #include <type_traits> // For offsetof (used in static_assert)
+#include <array>   // For std::array
 
 namespace kx::GameStructs {
 
@@ -88,5 +89,72 @@ namespace kx::GameStructs {
     // Helps catch errors if the struct definition or compiler padding changes unexpectedly.
     static_assert(offsetof(MsgSendContext, currentBufferEndPtr) == 0xD0, "Offset mismatch for MsgSendContext::currentBufferEndPtr");
     static_assert(offsetof(MsgSendContext, bufferState) == 0x108, "Offset mismatch for MsgSendContext::bufferState");
+
+
+
+    // --- Constants related to Message Receiving (FUN_1412ea0c0) ---
+
+    /**
+     * @brief The memory offset from the base address of the MsgConn context object
+     *        (passed as param_2/RDX to FUN_1412ea0c0) to the buffer state variable.
+     * @details This state variable appears to control how the received buffer is processed
+     *          (e.g., plain, encrypted, compressed). Its value is checked within
+     *          FUN_1412ea0c0. Reading this value provides context but should be done
+     *          carefully as the context pointer (param_2) might be invalid in some cases.
+     *          Observed offset is the same as in MsgSendContext.
+     * @see hookMsgRecv in MsgRecvHook.cpp for usage context.
+     */
+    inline constexpr std::ptrdiff_t MSGCONN_RECV_STATE_OFFSET = 0x108;
+
+    /**
+     * @brief The bitmask applied to the 4th parameter (param_4/R9) of FUN_1412ea0c0
+     *        to extract the actual size of the received data buffer.
+     * @details The game passes the size potentially combined with other flags in a
+     *          64-bit register, but masks it down to 32 bits for size calculations.
+     */
+    inline constexpr std::uint64_t MSGCONN_RECV_SIZE_MASK = 0xFFFFFFFF;
+
+    /**
+     * @brief The memory offset from the base address of the MsgConn context object
+     *        (passed as param_2/RDX to FUN_1412ea0c0) to the RC4 state structure.
+     * @details This structure contains the internal state (i, j, S-box) for the RC4
+     *          stream cipher used for decrypting incoming packets when the bufferState
+     *          at MSGCONN_RECV_STATE_OFFSET is 3.
+     * @see RC4State, hookMsgRecv
+     */
+    inline constexpr std::ptrdiff_t MSGCONN_RECV_RC4_STATE_OFFSET = 0x12C; // 300 decimal
+
+    /**
+     * @brief Represents the RC4 stream cipher state used by the game.
+     * @details Based on analysis of the RC4 function FUN_1412ed810.
+     *          The layout assumes standard alignment.
+     * @warning Structure layout is inferred and might change in future game updates.
+     */
+    struct alignas(4) RC4State { // Ensure 4-byte alignment for i and j
+        /**
+         * @brief RC4 state variable 'i'. Accessed as *param_1 in FUN_1412ed810.
+         * @details Stored as uint32_t by the game, but only the low byte is used in calculations.
+         */
+        std::uint32_t i = 0; // Offset 0x00
+
+        /**
+         * @brief RC4 state variable 'j'. Accessed as param_1[1] in FUN_1412ed810.
+         * @details Stored as uint32_t by the game, but only the low byte is used in calculations.
+         */
+        std::uint32_t j = 0; // Offset 0x04
+
+        /**
+         * @brief The RC4 S-box (permutation of 0-255). Accessed via base param_1 + 8.
+         */
+        std::array<std::uint8_t, 256> S = {}; // Offset 0x08 (Size 0x100)
+
+        // Total size is 4 + 4 + 256 = 264 bytes (0x108)
+    };
+
+    // Static assertions to verify expected offsets/size at compile time.
+    static_assert(offsetof(RC4State, i) == 0x00, "Offset mismatch for RC4State::i");
+    static_assert(offsetof(RC4State, j) == 0x04, "Offset mismatch for RC4State::j");
+    static_assert(offsetof(RC4State, S) == 0x08, "Offset mismatch for RC4State::S");
+    static_assert(sizeof(RC4State) == 0x108, "Size mismatch for RC4State");
 
 }

@@ -6,6 +6,7 @@
 #include <optional> // For std::optional
 #include "AppState.h"   // Include header for global state variables (UI, Hooks, etc.)
 #include "ImGuiManager.h"
+#include "MsgRecvHook.h"
 #include "../ImGui/imgui.h" // Need direct access to ImGui::GetIO()
 #include "../ImGui/imgui_impl_win32.h"
 #include "../ImGui/imgui_impl_dx11.h"
@@ -278,6 +279,32 @@ bool InitializeHooks() {
         std::cout << "MsgSend hook initialized." << std::endl;
     }
 
+    // --- Find and Hook MsgRecv ---
+    std::cout << "Scanning for MsgRecv pattern..." << std::endl;
+    std::optional<uintptr_t> msgRecvAddrOpt = kx::PatternScanner::FindPattern(
+        std::string(kx::MSG_RECV_PATTERN),
+        std::string(kx::TARGET_PROCESS_NAME)
+    );
+
+    kx::g_msgRecvHookStatus = kx::HookStatus::Failed; // Assume failure
+    if (!msgRecvAddrOpt) {
+        std::cerr << "MsgRecv pattern not found. MsgRecv hooking skipped." << std::endl;
+        // Decide if fatal (current logic: not fatal)
+    }
+    else {
+        kx::g_msgRecvAddress = *msgRecvAddrOpt;
+        std::cout << "MsgRecv pattern found at: 0x" << std::hex << kx::g_msgRecvAddress << std::dec << std::endl;
+        if (InitializeMsgRecvHook(kx::g_msgRecvAddress)) {
+            kx::g_msgRecvHookStatus = kx::HookStatus::OK;
+            std::cout << "MsgRecv hook initialized." << std::endl;
+        }
+        else {
+            std::cerr << "Failed to initialize MsgRecv hook. Hooking skipped." << std::endl;
+            // Status remains Failed
+            // Decide if fatal (current logic: not fatal)
+        }
+    }
+
     return true;
 }
 
@@ -300,4 +327,5 @@ void CleanupHooks() {
 
     // Cleanup MsgSend hook
     CleanupMsgSendHook();
+	CleanupMsgRecvHook();
 }

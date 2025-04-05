@@ -157,6 +157,8 @@
   <ItemGroup>
     <ClCompile Include="src\AppState.cpp" />
     <ClCompile Include="src\Console.cpp" />
+    <ClCompile Include="src\CryptoUtils.cpp" />
+    <ClCompile Include="src\FormattingUtils.cpp" />
     <ClCompile Include="src\GuiStyle.cpp" />
     <ClCompile Include="src\Hooks.cpp" />
     <ClCompile Include="src\ImGuiManager.cpp" />
@@ -168,14 +170,18 @@
     <ClCompile Include="ImGui\imgui_tables.cpp" />
     <ClCompile Include="ImGui\imgui_widgets.cpp" />
     <ClCompile Include="src\Main.cpp" />
+    <ClCompile Include="src\MsgRecvHook.cpp" />
     <ClCompile Include="src\MsgSendHook.cpp" />
     <ClCompile Include="src\PacketData.cpp" />
+    <ClCompile Include="src\PacketProcessor.cpp" />
     <ClCompile Include="src\PatternScanner.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\AppState.h" />
     <ClInclude Include="src\Config.h" />
     <ClInclude Include="src\Console.h" />
+    <ClInclude Include="src\CryptoUtils.h" />
+    <ClInclude Include="src\FormattingUtils.h" />
     <ClInclude Include="src\GameStructs.h" />
     <ClInclude Include="src\GuiStyle.h" />
     <ClInclude Include="src\Hooks.h" />
@@ -189,9 +195,11 @@
     <ClInclude Include="ImGui\imstb_textedit.h" />
     <ClInclude Include="ImGui\imstb_truetype.h" />
     <ClInclude Include="MinHook\MinHook.h" />
+    <ClInclude Include="src\MsgRecvHook.h" />
     <ClInclude Include="src\MsgSendHook.h" />
     <ClInclude Include="src\PacketData.h" />
     <ClInclude Include="src\PacketHeaders.h" />
+    <ClInclude Include="src\PacketProcessor.h" />
     <ClInclude Include="src\PatternScanner.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
